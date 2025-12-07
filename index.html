@@ -1,304 +1,927 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-
-<title>Ma Sói Host Mobile</title>
-
-<style>
-  body {
-    margin:0;
-    background:#0a0f17;
-    color:#fff;
-    font-family:Arial, sans-serif;
-  }
-
-  .container {
-    max-width:430px;
-    margin:auto;
-    padding:10px 14px;
-  }
-
-  h2 {
-    font-size:18px;
-    margin-top:12px;
-    margin-bottom:6px;
-  }
-
-  input, select {
-    width:100%;
-    padding:10px;
-    margin:5px 0;
-    border-radius:8px;
-    border:none;
-    font-size:15px;
-    background:#151b25;
-    color:#fff;
-  }
-
-  button {
-    width:100%;
-    padding:12px;
-    margin:6px 0;
-    font-size:16px;
-    border-radius:8px;
-    border:none;
-    font-weight:bold;
-    color:#fff;
-  }
-
-  .btn-primary {
-    background:#1abc9c;
-  }
-  .btn-secondary {
-    background:#34495e;
-  }
-  .btn-danger {
-    background:#e74c3c;
-  }
-
-  .player-card {
-    background:#111621;
-    margin-top:6px;
-    padding:10px;
-    border-radius:8px;
-    font-size:14px;
-  }
-
-  .status {
-    font-size:12px;
-    opacity:.7;
-  }
-
-  #log-box {
-    background:#0f141d;
-    padding:10px;
-    border-radius:8px;
-    height:200px;
-    overflow-y:auto;
-    font-size:13px;
-    margin-top:10px;
-  }
-
-  .log-line {
-    border-bottom:1px dotted #333;
-    padding:3px 0;
-  }
-</style>
-</head>
-
-<body>
-<div class="container">
-
-<h2>Thêm người chơi</h2>
-<input id="name" placeholder="Tên người chơi">
-<select id="role"></select>
-<button class="btn-secondary" onclick="addPlayer()">Thêm người</button>
-
-<button class="btn-primary" onclick="startGame()">🌙 Bắt đầu ván</button>
-
-<h2>Người chơi</h2>
-<div id="players"></div>
-
-<h2>Điều khiển</h2>
-<button class="btn-secondary" onclick="nextRole()">📣 Gọi role</button>
-<button class="btn-secondary" onclick="startDay()">☀️ Bắt đầu ngày</button>
-<button class="btn-secondary" onclick="startNight()">🌙 Bắt đầu đêm</button>
-<button class="btn-danger" onclick="resetAll()">Xóa ván</button>
-
-<h2>Log</h2>
-<div id="log-box"></div>
-
-</div>
-
-<script>
-const ROLES = [
-  {id:"werewolf",label:"🐺 Sói"},
-  {id:"seer",label:"🔮 Tiên tri"},
-  {id:"witch",label:"🧪 Phù thủy"},
-  {id:"guard",label:"🛡️ Bảo vệ"},
-  {id:"mage",label:"🧙 Pháp sư"},
-  {id:"gambler",label:"🎲 Con bạc"},
-  {id:"prince",label:"👑 Hoàng tử"},
-  {id:"villager",label:"👤 Dân làng"}
-];
-
-const ORDER = ["mage","werewolf","seer","witch","guard","gambler","prince"];
-
-let state = {
-  players:[],
-  phase:"setup",
-  night:1,
-  step:0,
-  logs:[],
-  witchUsed:false,
-  actions:{
-    wolf:null,
-    guard:null,
-    witchHeal:false,
-    witchPoison:null,
-    mute:null,
-    bet:null
-  }
-};
-
-function log(t){
-  state.logs.unshift(t);
-  renderLogs();
-}
-
-function addPlayer(){
-  let name=document.getElementById("name").value.trim();
-  let role=document.getElementById("role").value;
-  if(!name||!role) return alert("Nhập đầy đủ");
-  state.players.push({name,role,alive:true,muted:false});
-  document.getElementById("name").value="";
-  renderPlayers();
-  log("➕ "+name+" ("+role+")");
-}
-
-function startGame(){
-  if(state.players.length<4) return alert("Cần ≥ 4 người");
-  state.phase="night";
-  state.step=0;
-  log("🌙 Đêm 1 bắt đầu");
-  renderPlayers();
-}
-
-function startNight(){
-  if(state.phase==="ended") return;
-  state.phase="night";
-  state.night++;
-  state.step=0;
-  state.players.forEach(p=>p.muted=false);
-  state.actions={wolf:null,guard:null,witchHeal:false,witchPoison:null,mute:null,bet:null};
-  log("🌙 Đêm "+state.night+" bắt đầu");
-}
-
-function startDay(){
-  if(state.phase==="ended") return;
-  state.phase="day";
-  log("☀️ Ban ngày bắt đầu");
-}
-
-function nextRole(){
-  if(state.phase!=="night") return alert("Role chỉ gọi lúc ĐÊM");
-  if(state.step>=ORDER.length){
-    resolveNight();
-    log("✔ Đêm kết thúc");
-    return;
-  }
-  let r=ORDER[state.step++];
-  callRole(r);
-}
-
-function callRole(r){
-  if(!state.players.some(p=>p.role===r&&p.alive)) return;
-  log("📣 Gọi "+r);
-  // (Panel input thực tế mình đã giản lược — bạn tick miệng,
-  // app chỉ tracking log & xử lý chết/sống)
-}
-
-function resolveNight(){
-  let deaths=[];
-  function get(p){return state.players.find(x=>x.name===p&&x.alive);}
-  let wolf=get(state.actions.wolf);
-  let guard=get(state.actions.guard);
-  let poison=get(state.actions.witchPoison);
-
-  let potionUsed=false;
-
-  if(wolf){
-    if(guard===wolf){
-      log("🛡️ Bảo vệ che chắn "+wolf.name);
-    }else if(!state.witchUsed && state.actions.witchHeal){
-      potionUsed=true;
-      log("🧪 Phù thủy CỨU "+wolf.name);
-    }else{
-      deaths.push(wolf);
-      log("🐺 Sói giết "+wolf.name);
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ma Sói – Host Mobile</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+      background: #050816;
+      color: #e5e7eb;
     }
-  }
+    .app {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 12px 14px 24px;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 1.4rem;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      color: #9ca3af;
+      margin-bottom: 10px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: rgba(96, 165, 250, 0.15);
+      border: 1px solid rgba(96, 165, 250, 0.4);
+      color: #bfdbfe;
+      margin-bottom: 10px;
+    }
+    .card {
+      background: #020617;
+      border-radius: 14px;
+      padding: 10px 10px 12px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: 0 14px 30px rgba(0,0,0,0.6);
+      margin-bottom: 10px;
+    }
+    .card h2 {
+      margin: 0 0 6px;
+      font-size: 1.05rem;
+    }
+    .small { font-size: 0.78rem; }
+    .hint {
+      font-size: 0.78rem;
+      color: #9ca3af;
+      margin-top: 4px;
+    }
+    input[type="text"], select {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.5);
+      background: rgba(15,23,42,0.9);
+      color: #e5e7eb;
+      font-size: 0.9rem;
+      margin-top: 4px;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #60a5fa;
+      box-shadow: 0 0 0 1px rgba(96,165,250,0.4);
+    }
+    button {
+      width: 100%;
+      border-radius: 999px;
+      border: none;
+      padding: 9px 10px;
+      font-size: 0.9rem;
+      margin-top: 6px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+    button.primary {
+      background: linear-gradient(135deg,#22c55e,#16a34a);
+      color: #052e16;
+      box-shadow: 0 10px 20px rgba(22,163,74,0.4);
+    }
+    button.secondary {
+      background: rgba(15,23,42,0.95);
+      color: #e5e7eb;
+      border: 1px solid rgba(148,163,184,0.4);
+    }
+    button.danger {
+      background: rgba(248,113,113,0.12);
+      color: #fecaca;
+      border: 1px solid rgba(248,113,113,0.8);
+    }
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    .row-2 {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .row-2 > * { flex: 1; }
 
-  if(!state.witchUsed && poison){
-    deaths.push(poison);
-    potionUsed=true;
-    log("💀 Phù thủy ĐỘC "+poison.name);
-  }
+    .player-card {
+      background: #020617;
+      border-radius: 10px;
+      padding: 6px 8px;
+      margin-top: 6px;
+      border: 1px solid rgba(51,65,85,0.9);
+      font-size: 0.83rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .player-card.dead { opacity: 0.55; }
+    .pill {
+      border-radius: 999px;
+      padding: 2px 6px;
+      font-size: 0.7rem;
+      margin-left: 4px;
+    }
+    .pill.alive {
+      background: rgba(34,197,94,0.15);
+      color: #bbf7d0;
+      border: 1px solid rgba(34,197,94,0.7);
+    }
+    .pill.dead {
+      background: rgba(239,68,68,0.12);
+      color: #fecaca;
+      border: 1px solid rgba(239,68,68,0.7);
+    }
+    .pill.muted {
+      background: rgba(234,179,8,0.12);
+      color: #fef9c3;
+      border: 1px solid rgba(234,179,8,0.8);
+    }
+    .tag-role {
+      border-radius: 999px;
+      padding: 2px 6px;
+      border: 1px solid rgba(148,163,184,0.6);
+      background: rgba(15,23,42,0.9);
+      font-size: 0.75rem;
+    }
+    .log-box {
+      max-height: 230px;
+      overflow-y: auto;
+      background: #020617;
+      border-radius: 10px;
+      padding: 6px 8px;
+      border: 1px solid rgba(31,41,55,0.9);
+      font-size: 0.8rem;
+    }
+    .log-line {
+      padding: 3px 0;
+      border-bottom: 1px dashed rgba(31,41,55,0.9);
+    }
+    .phase-label {
+      font-size: 0.85rem;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.6);
+      display: inline-block;
+      background: rgba(15,23,42,0.9);
+      margin-bottom: 4px;
+    }
+    .status-text {
+      font-size: 0.8rem;
+      color: #e5e7eb;
+      margin-bottom: 4px;
+    }
+    .status-text strong { color: #facc15; }
+    .winner-text {
+      font-size: 0.9rem;
+      margin-top: 4px;
+      font-weight: 600;
+    }
+    .winner-village { color: #bbf7d0; }
+    .winner-wolves { color: #fecaca; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>Werewolf Manual Host</h1>
+    <div class="subtitle">Bản hỗ trợ quản trò · Chơi bằng bộ bài thật</div>
+    <div class="badge">Dùng tốt trên điện thoại</div>
 
-  if(potionUsed){
-    state.witchUsed=true;
-    log("🧪 Phù thủy đã hết bình cho cả game");
-  }
+    <!-- SETUP -->
+    <section class="card">
+      <h2>1. Setup người chơi</h2>
+      <div class="small">Nhập tên + role trùng với lá bài thật.</div>
+      <input id="playerNameInput" type="text" placeholder="Tên (vd: Huy, Duy, ...)" />
+      <select id="playerRoleInput" style="margin-top:4px;"></select>
+      <button class="secondary" onclick="addPlayer()">➕ Thêm người chơi</button>
+      <div class="row-2">
+        <button id="startGameBtn" class="primary" onclick="startGame()">🌙 Bắt đầu ván (Đêm 1)</button>
+        <button class="danger" onclick="resetAll(true)">♻ Reset ván</button>
+      </div>
+      <div class="hint">Bấm vào thẻ người chơi để chuyển <b>Sống ↔ Chết</b> nếu cần chỉnh tay.</div>
+    </section>
 
-  if(state.actions.mute){
-    let m=get(state.actions.mute);
-    if(m){ m.muted=true; log("🤐 "+m.name+" bị MUTE"); }
-  }
+    <!-- PLAYERS -->
+    <section class="card">
+      <h2>2. Người chơi (<span id="playerCount">0</span>)</h2>
+      <div id="playersList"></div>
+    </section>
 
-  if(state.night>=2 && state.actions.bet){
-    let g=state.players.find(p=>p.role==="gambler"&&p.alive);
-    let t=get(state.actions.bet);
-    if(g&&t){
-      if(t.role==="werewolf"){
-        deaths.push(t); log("🎲 Con bạc đoán TRÚNG Sói!");
-      }else{
-        deaths.push(g); log("🎲 Con bạc đoán sai -> chết");
+    <!-- CONTROL -->
+    <section class="card">
+      <h2>3. Điều khiển & Hành động đêm</h2>
+      <div id="phaseInfo"></div>
+      <div id="statusText" class="status-text"></div>
+      <div id="winnerText" class="winner-text"></div>
+
+      <div class="row-2" style="margin-top:6px;">
+        <button id="nightBtn" class="secondary" onclick="startNight()">🌙 Sang ĐÊM</button>
+        <button id="dayBtn" class="secondary" onclick="startDay()">☀️ Sang NGÀY</button>
+      </div>
+      <div class="row-2">
+        <button id="callBtn" class="secondary" onclick="nextRoleCall()">📣 Gọi role tiếp theo</button>
+        <button id="endBtn" class="danger" onclick="forceEndGame()">🛑 Kết thúc ván</button>
+      </div>
+
+      <div id="nightActionPanel" style="margin-top:8px;" class="small"></div>
+    </section>
+
+    <!-- LOG -->
+    <section class="card">
+      <h2>4. Log</h2>
+      <div id="logBox" class="log-box"></div>
+    </section>
+  </div>
+
+  <script>
+    // ======== CẤU HÌNH ROLE & STATE ========
+
+    const ROLES = [
+      { id: "werewolf", label: "🐺 Ma Sói" },
+      { id: "seer", label: "🔮 Tiên tri" },
+      { id: "witch", label: "🧪 Phù thủy" },
+      { id: "guard", label: "🛡️ Bảo vệ" },
+      { id: "gambler", label: "🎲 Con bạc" },
+      { id: "prince", label: "👑 Hoàng tử" },
+      { id: "mage", label: "🧙 Pháp sư" },
+      { id: "villager", label: "👤 Dân làng" },
+    ];
+
+    const NIGHT_CALL_ORDER = [
+      "mage",
+      "werewolf",
+      "seer",
+      "witch",
+      "guard",
+      "gambler",
+      "prince",
+    ];
+
+    const state = {
+      players: [], // {id, name, role, alive, muted}
+      phase: "lobby",
+      nightNumber: 0,
+      dayNumber: 0,
+      currentNightStepIndex: 0,
+      logs: [],
+      winner: null,
+      nightActions: {
+        wolfTargetId: null,
+        guardTargetId: null,
+        witchHeal: null,          // true/false/null
+        witchPoisonTargetId: null,
+        mageMuteTargetId: null,
+        gamblerBetTargetId: null,
+      },
+      witchUsed: false, // đã từng dùng bình (cứu, độc, hoặc cả hai)
+    };
+
+    // ======== TIỆN ÍCH ========
+
+    function roleLabel(id) {
+      const r = ROLES.find(r => r.id === id);
+      return r ? r.label : id;
+    }
+
+    function addLog(text) {
+      state.logs.unshift(text);
+      renderLogs();
+    }
+
+    function countAlive() {
+      const alive = state.players.filter(p => p.alive);
+      const wolves = alive.filter(p => p.role === "werewolf");
+      const others = alive.length - wolves.length;
+      return { alive, wolves, others };
+    }
+
+    function checkWinner() {
+      const { wolves, others } = countAlive();
+      if (wolves.length === 0 && (wolves.length + others) > 0) {
+        state.winner = "village";
+        state.phase = "ended";
+        addLog("✅ DÂN LÀNG thắng – không còn Ma Sói nào.");
+      } else if (wolves.length > 0 && wolves.length >= others) {
+        state.winner = "wolves";
+        state.phase = "ended";
+        addLog("☠️ MA SÓI thắng – số Sói ≥ số người còn lại.");
+      } else {
+        state.winner = null;
+      }
+      renderPhaseInfo();
+      renderWinner();
+    }
+
+    function resetNightActions() {
+      state.nightActions = {
+        wolfTargetId: null,
+        guardTargetId: null,
+        witchHeal: null,
+        witchPoisonTargetId: null,
+        mageMuteTargetId: null,
+        gamblerBetTargetId: null,
+      };
+    }
+
+    // ======== SETUP ========
+
+    function populateRoleSelect() {
+      const sel = document.getElementById("playerRoleInput");
+      ROLES.forEach(r => {
+        const opt = document.createElement("option");
+        opt.value = r.id;
+        opt.textContent = r.label;
+        sel.appendChild(opt);
+      });
+    }
+
+    function addPlayer() {
+      const nameInput = document.getElementById("playerNameInput");
+      const roleInput = document.getElementById("playerRoleInput");
+      const name = nameInput.value.trim();
+      const role = roleInput.value;
+
+      if (!name || !role) {
+        alert("Nhập tên và chọn role.");
+        return;
+      }
+      if (state.phase !== "lobby") {
+        alert("Ván đã bắt đầu, muốn thêm người hãy reset.");
+        return;
+      }
+
+      if (state.players.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+        alert("Tên này đã có trong danh sách.");
+        return;
+      }
+
+      state.players.push({
+        id: Date.now() + Math.random(),
+        name,
+        role,
+        alive: true,
+        muted: false,
+      });
+
+      nameInput.value = "";
+      roleInput.value = "";
+
+      addLog(`➕ Thêm ${name} (${roleLabel(role)})`);
+      renderPlayers();
+      renderPhaseInfo();
+    }
+
+    function toggleAlive(id) {
+      const p = state.players.find(p => p.id === id);
+      if (!p) return;
+      p.alive = !p.alive;
+      addLog(`${p.alive ? "❤️ Hồi sinh" : "☠️ Chết (chỉnh tay)"}: ${p.name}`);
+      renderPlayers();
+      checkWinner();
+    }
+
+    function removePlayer(id) {
+      if (state.phase !== "lobby") {
+        alert("Ván đã bắt đầu, không xóa người chơi được.");
+        return;
+      }
+      const p = state.players.find(p => p.id === id);
+      state.players = state.players.filter(p => p.id !== id);
+      addLog(`🗑️ Xóa người chơi: ${p ? p.name : "???"}`);
+      renderPlayers();
+      renderPhaseInfo();
+    }
+
+    // ======== LUỒNG GAME ========
+
+    function startGame() {
+      if (state.phase !== "lobby") {
+        alert("Ván đã bắt đầu rồi.");
+        return;
+      }
+      if (state.players.length < 4) {
+        alert("Cần ít nhất 4 người chơi.");
+        return;
+      }
+      const { wolves, others } = countAlive();
+      if (wolves.length === 0 || others === 0) {
+        alert("Cần ít nhất 1 Ma Sói và 1 người không phải Sói.");
+        return;
+      }
+
+      state.phase = "night";
+      state.nightNumber = 1;
+      state.dayNumber = 0;
+      state.currentNightStepIndex = 0;
+      state.winner = null;
+      state.witchUsed = false;
+      resetNightActions();
+
+      addLog("🌙 ĐÊM 1 bắt đầu. Mọi người nhắm mắt.");
+      renderPhaseInfo();
+      renderWinner();
+    }
+
+    function startNight() {
+      if (state.phase === "lobby") {
+        alert("Bấm 'Bắt đầu ván' trước.");
+        return;
+      }
+      if (state.phase === "ended") {
+        alert("Ván đã kết thúc.");
+        return;
+      }
+      state.phase = "night";
+      state.nightNumber = (state.nightNumber || 0) + 1;
+      state.currentNightStepIndex = 0;
+      resetNightActions();
+      state.players.forEach(p => p.muted = false);
+      addLog(`🌙 ĐÊM ${state.nightNumber} bắt đầu.`);
+      renderPlayers();
+      renderPhaseInfo();
+    }
+
+    function startDay() {
+      if (state.phase === "lobby") {
+        alert("Ván chưa bắt đầu.");
+        return;
+      }
+      if (state.phase === "ended") {
+        alert("Ván đã kết thúc.");
+        return;
+      }
+      state.phase = "day";
+      state.dayNumber = (state.dayNumber || 0) + 1;
+      addLog(`☀️ NGÀY ${state.dayNumber} bắt đầu.`);
+      renderPhaseInfo();
+    }
+
+    function nextRoleCall() {
+      if (state.phase !== "night") {
+        alert("Chỉ dùng khi đang ĐÊM.");
+        return;
+      }
+      const aliveRoles = new Set(
+        state.players.filter(p => p.alive).map(p => p.role)
+      );
+
+      while (state.currentNightStepIndex < NIGHT_CALL_ORDER.length) {
+        const step = NIGHT_CALL_ORDER[state.currentNightStepIndex];
+        state.currentNightStepIndex++;
+
+        if (step === "witch") {
+          if (!aliveRoles.has("witch")) continue;
+          let msg;
+          if (state.witchUsed) {
+            msg = "🧪 Phù thủy đã dùng hết bình ở đêm trước, từ nay ngủ.";
+          } else {
+            msg = "🧪 Phù thủy dậy: có thể CỨU nạn nhân Sói, ĐỘC 1 người, dùng cả 2, hoặc không dùng. Sau đêm này sẽ hết bình.";
+          }
+          addLog(msg);
+          renderPhaseInfo(step);
+          return;
+        }
+
+        if (!aliveRoles.has(step)) continue;
+
+        let msg = "";
+        switch (step) {
+          case "mage":
+            msg = "🧙 Pháp sư dậy, chọn 1 người bị MUTE ngày mai.";
+            break;
+          case "werewolf":
+            msg = "🐺 Sói dậy, chọn 1 người để cắn.";
+            break;
+          case "seer":
+            msg = "🔮 Tiên tri dậy, chọn 1 người để hỏi có phải Sói.";
+            break;
+          case "guard":
+            msg = "🛡️ Bảo vệ dậy, chọn 1 người để bảo vệ.";
+            break;
+          case "gambler":
+            if (state.nightNumber < 2) {
+              msg = "🎲 Con bạc ngủ đêm 1 (chỉ cược từ ĐÊM 2).";
+            } else {
+              msg = "🎲 Con bạc dậy, cược 1 người: trúng Sói → Sói chết, sai → Con bạc chết.";
+            }
+            break;
+          case "prince":
+            msg = "👑 Hoàng tử: thường chỉ ảnh hưởng khi bị treo cổ ban ngày.";
+            break;
+        }
+        addLog(msg);
+        renderPhaseInfo(step);
+        return;
+      }
+
+      // Hết role -> tính kết quả đêm
+      applyNightResults();
+      addLog("✅ Hết đêm. Quản trò có thể bấm 'Sang NGÀY'.");
+      renderPhaseInfo();
+    }
+
+    function applyNightResults() {
+      const a = state.nightActions;
+      const nightNo = state.nightNumber || 1;
+      const deaths = [];
+      const saved = [];
+      let mutedPlayer = null;
+      let potionUsedThisNight = false;
+
+      const findAliveById = id => state.players.find(p => p.id === id && p.alive);
+
+      const wolfVictim = findAliveById(a.wolfTargetId);
+      const guardTarget = findAliveById(a.guardTargetId);
+      const poisonTarget = findAliveById(a.witchPoisonTargetId);
+      const healed = a.witchHeal === true;
+      const canUsePotion = !state.witchUsed;
+
+      // Sói + Bảo vệ + bình cứu
+      if (wolfVictim) {
+        let blocked = false;
+        if (guardTarget && guardTarget.id === wolfVictim.id) {
+          blocked = true;
+          addLog(`🛡️ Đêm ${nightNo}: Bảo vệ che chắn ${wolfVictim.name}.`);
+        }
+        if (canUsePotion && healed && !blocked) {
+          saved.push(wolfVictim);
+          potionUsedThisNight = true;
+          addLog(`🧪 Đêm ${nightNo}: Phù thủy CỨU ${wolfVictim.name}.`);
+        } else if (!blocked && (!canUsePotion || !healed)) {
+          deaths.push(wolfVictim);
+          addLog(`🐺 Đêm ${nightNo}: Sói giết ${wolfVictim.name}.`);
+        }
+      } else if (canUsePotion && healed) {
+        potionUsedThisNight = true;
+        addLog(`🧪 Đêm ${nightNo}: Phù thủy muốn cứu nhưng không có nạn nhân.`);
+      }
+
+      // Bình độc
+      if (canUsePotion && poisonTarget) {
+        if (!deaths.includes(poisonTarget)) deaths.push(poisonTarget);
+        potionUsedThisNight = true;
+        addLog(`💀 Đêm ${nightNo}: Phù thủy ĐỘC ${poisonTarget.name}.`);
+      }
+
+      if (potionUsedThisNight) {
+        state.witchUsed = true;
+        addLog(`🧪 Sau ĐÊM ${nightNo}: Phù thủy đã dùng xong bình. Các đêm sau sẽ ngủ.`);
+      }
+
+      // Pháp sư mute
+      if (a.mageMuteTargetId) {
+        mutedPlayer = findAliveById(a.mageMuteTargetId);
+        if (mutedPlayer) {
+          mutedPlayer.muted = true;
+          addLog(`🤐 Đêm ${nightNo}: ${mutedPlayer.name} bị MUTE ngày mai.`);
+        }
+      }
+
+      // Con bạc
+      if (state.nightNumber >= 2 && a.gamblerBetTargetId) {
+        const gambler = state.players.find(p => p.role === "gambler" && p.alive);
+        const target = findAliveById(a.gamblerBetTargetId);
+        if (gambler && target) {
+          if (target.role === "werewolf") {
+            if (!deaths.includes(target)) deaths.push(target);
+            addLog(`🎲 Đêm ${nightNo}: Con bạc đoán TRÚNG Sói (${target.name}).`);
+          } else {
+            if (!deaths.includes(gambler)) deaths.push(gambler);
+            addLog(`🎲 Đêm ${nightNo}: Con bạc đoán sai (${target.name} không phải Sói) → Con bạc chết.`);
+          }
+        }
+      }
+
+      // Unique deaths
+      const uniqueDeaths = [];
+      const seen = new Set();
+      deaths.forEach(p => {
+        if (p && !seen.has(p.id)) {
+          seen.add(p.id);
+          uniqueDeaths.push(p);
+        }
+      });
+
+      if (uniqueDeaths.length === 0 && saved.length === 0 && !mutedPlayer) {
+        addLog(`🌙 Đêm ${nightNo}: Không ai chết, không ai bị mute.`);
+      }
+
+      uniqueDeaths.forEach(p => {
+        if (p.alive) {
+          p.alive = false;
+          addLog(`☠️ Đêm ${nightNo}: ${p.name} chết.`);
+        }
+      });
+
+      resetNightActions();
+      renderPlayers();
+      checkWinner();
+    }
+
+    function forceEndGame() {
+      if (!confirm("Kết thúc ván hiện tại?")) return;
+      state.phase = "ended";
+      state.winner = null;
+      addLog("🛑 Quản trò kết thúc ván (manual).");
+      renderPhaseInfo();
+      renderWinner();
+    }
+
+    function resetAll(ask) {
+      if (ask && !confirm("Reset toàn bộ ván?")) return;
+      state.players = [];
+      state.phase = "lobby";
+      state.nightNumber = 0;
+      state.dayNumber = 0;
+      state.currentNightStepIndex = 0;
+      state.logs = [];
+      state.winner = null;
+      state.witchUsed = false;
+      resetNightActions();
+      renderPlayers();
+      renderLogs();
+      renderPhaseInfo();
+      renderWinner();
+    }
+
+    // ======== HANDLERS DROPDOWN ========
+
+    function updateNightAction(kind, value) {
+      const id = value ? Number(value) : null;
+      const p = state.players.find(pl => pl.id === id);
+
+      if (kind === "werewolf") {
+        state.nightActions.wolfTargetId = id;
+        addLog(p ? `📌 Sói dự định cắn ${p.name}.` : "📌 Sói chưa chọn nạn nhân.");
+      } else if (kind === "guard") {
+        state.nightActions.guardTargetId = id;
+        addLog(p ? `📌 Bảo vệ dự định bảo vệ ${p.name}.` : "📌 Bảo vệ chưa chọn ai.");
+      } else if (kind === "witch_poison") {
+        if (state.witchUsed) {
+          alert("Phù thủy đã hết bình.");
+          return;
+        }
+        state.nightActions.witchPoisonTargetId = id || null;
+        addLog(p ? `📌 Phù thủy dự định ĐỘC ${p.name}.` : "📌 Phù thủy chưa chọn mục tiêu độc.");
+      } else if (kind === "mage_mute") {
+        state.nightActions.mageMuteTargetId = id;
+        addLog(p ? `📌 Pháp sư dự định MUTE ${p.name}.` : "📌 Pháp sư chưa chọn ai để mute.");
+      } else if (kind === "gambler_bet") {
+        state.nightActions.gamblerBetTargetId = id;
+        addLog(p ? `📌 Con bạc dự định cược vào ${p.name}.` : "📌 Con bạc chưa cược ai.");
+      }
+      renderPhaseInfo();
+    }
+
+    function setWitchHeal(val) {
+      if (state.witchUsed) {
+        alert("Phù thủy đã hết bình.");
+        return;
+      }
+      state.nightActions.witchHeal = val;
+      if (val === true) {
+        addLog("🧪 Ghi nhận: Phù thủy sẽ CỨU nạn nhân của Sói (vẫn có thể ĐỘC thêm).");
+      } else if (val === false) {
+        addLog("🧪 Ghi nhận: Phù thủy không dùng bình cứu (có thể dùng bình độc hoặc không làm gì).");
+      }
+      renderPhaseInfo("witch");
+    }
+
+    // ======== RENDER ========
+
+    function renderPlayers() {
+      const box = document.getElementById("playersList");
+      box.innerHTML = "";
+      state.players.forEach(p => {
+        const div = document.createElement("div");
+        div.className = "player-card" + (p.alive ? "" : " dead");
+        div.onclick = () => toggleAlive(p.id);
+
+        const left = document.createElement("div");
+        left.innerHTML = `<b>${p.name}</b><br><span class="tag-role">${roleLabel(p.role)}</span>`;
+
+        const right = document.createElement("div");
+        const pill = document.createElement("span");
+        pill.className = "pill " + (p.alive ? "alive" : "dead");
+        pill.textContent = p.alive ? "SỐNG" : "CHẾT";
+        right.appendChild(pill);
+        if (p.muted && p.alive) {
+          const m = document.createElement("span");
+          m.className = "pill muted";
+          m.textContent = "MUTE";
+          right.appendChild(m);
+        }
+        const del = document.createElement("button");
+        del.textContent = "X";
+        del.style.marginLeft = "6px";
+        del.style.fontSize = "0.7rem";
+        del.style.padding = "2px 6px";
+        del.style.width = "auto";
+        del.className = "danger";
+        del.onclick = (e) => { e.stopPropagation(); removePlayer(p.id); };
+        right.appendChild(del);
+
+        div.appendChild(left);
+        div.appendChild(right);
+        box.appendChild(div);
+      });
+
+      document.getElementById("playerCount").textContent = state.players.length;
+    }
+
+    function renderLogs() {
+      const box = document.getElementById("logBox");
+      box.innerHTML = "";
+      state.logs.forEach(l => {
+        const div = document.createElement("div");
+        div.className = "log-line";
+        div.textContent = l;
+        box.appendChild(div);
+      });
+    }
+
+    function renderPhaseInfo(currentNightStep) {
+      const phaseBox = document.getElementById("phaseInfo");
+      const statusBox = document.getElementById("statusText");
+      const actionPanel = document.getElementById("nightActionPanel");
+
+      const { alive, wolves, others } = countAlive();
+      let label = "";
+      if (state.phase === "lobby") label = "⏳ Đang setup người chơi";
+      else if (state.phase === "night") label = `🌙 ĐÊM ${state.nightNumber || 1}`;
+      else if (state.phase === "day") label = `☀️ NGÀY ${state.dayNumber || 1}`;
+      else label = "🏁 VÁN KẾT THÚC";
+
+      phaseBox.innerHTML = `<div class="phase-label">${label}</div>`;
+      statusBox.innerHTML =
+        `Còn sống: <strong>${alive.length}</strong> · Sói: <strong>${wolves.length}</strong> · Người khác: <strong>${others}</strong>`;
+
+      // Enable / disable buttons
+      document.getElementById("startGameBtn").disabled =
+        state.phase !== "lobby" || state.players.length < 4;
+      document.getElementById("nightBtn").disabled = state.phase === "ended";
+      document.getElementById("dayBtn").disabled = state.phase === "ended";
+      document.getElementById("callBtn").disabled =
+        state.phase !== "night" || state.phase === "ended";
+      document.getElementById("endBtn").disabled = state.phase === "lobby";
+
+      // Render action panel
+      actionPanel.innerHTML = "";
+      if (state.phase !== "night") return;
+
+      const step =
+        currentNightStep ||
+        NIGHT_CALL_ORDER[state.currentNightStepIndex - 1] ||
+        null;
+      if (!step) return;
+
+      const aliveList = countAlive().alive;
+
+      if (step === "werewolf") {
+        const opts = aliveList
+          .filter(p => p.role !== "werewolf")
+          .map(p =>
+            `<option value="${p.id}" ${state.nightActions.wolfTargetId === p.id ? "selected" : ""}>
+              ${p.name}
+            </option>`
+          ).join("");
+        actionPanel.innerHTML = `
+          <b>Sói cắn ai?</b>
+          <select onchange="updateNightAction('werewolf', this.value)">
+            <option value="">(Chưa chọn)</option>
+            ${opts}
+          </select>
+          <div class="hint">Chọn nạn nhân bị Sói cắn.</div>
+        `;
+      } else if (step === "guard") {
+        const opts = aliveList.map(p =>
+          `<option value="${p.id}" ${state.nightActions.guardTargetId === p.id ? "selected" : ""}>
+            ${p.name}
+          </option>`
+        ).join("");
+        actionPanel.innerHTML = `
+          <b>Bảo vệ bảo vệ ai?</b>
+          <select onchange="updateNightAction('guard', this.value)">
+            <option value="">(Chưa chọn)</option>
+            ${opts}
+          </select>
+          <div class="hint">Nếu trùng nạn nhân Sói cắn → người đó không chết.</div>
+        `;
+      } else if (step === "witch") {
+        if (state.witchUsed) {
+          actionPanel.innerHTML = `
+            <b>Phù thủy</b>
+            <div class="hint">Đã dùng hết bình (cứu/độc) ở đêm trước → các đêm sau ngủ.</div>
+          `;
+        } else {
+          const victim = state.players.find(p => p.id === state.nightActions.wolfTargetId);
+          const victimName = victim ? victim.name : "Chưa rõ / Không có";
+          const opts = aliveList.map(p =>
+            `<option value="${p.id}" ${state.nightActions.witchPoisonTargetId === p.id ? "selected" : ""}>
+              ${p.name}
+            </option>`
+          ).join("");
+          actionPanel.innerHTML = `
+            <b>Phù thủy – Cứu / Độc</b>
+            <div class="small">Nạn nhân Sói cắn: <b>${victimName}</b></div>
+            <div class="row-2" style="margin-top:4px;">
+              <button class="secondary" onclick="setWitchHeal(false)">Không cứu</button>
+              <button class="primary" onclick="setWitchHeal(true)">CỨU nạn nhân</button>
+            </div>
+            <div style="margin-top:6px;">Chọn người để ĐỘC (có thể kết hợp với CỨU):</div>
+            <select onchange="updateNightAction('witch_poison', this.value)">
+              <option value="">(Không độc ai)</option>
+              ${opts}
+            </select>
+            <div class="hint">
+              Trong đêm này có thể không dùng bình, chỉ CỨU, chỉ ĐỘC hoặc CẢ HAI.
+              Sau khi dùng bất kỳ bình nào, các đêm sau Phù thủy không dùng được nữa.
+            </div>
+          `;
+        }
+      } else if (step === "mage") {
+        const opts = aliveList.map(p =>
+          `<option value="${p.id}" ${state.nightActions.mageMuteTargetId === p.id ? "selected" : ""}>
+            ${p.name}
+          </option>`
+        ).join("");
+        actionPanel.innerHTML = `
+          <b>Pháp sư – MUTE ai?</b>
+          <select onchange="updateNightAction('mage_mute', this.value)">
+            <option value="">(Không mute ai)</option>
+            ${opts}
+          </select>
+          <div class="hint">Người bị chọn sẽ bị MUTE, không được phát biểu NGÀY hôm sau (tùy luật bạn).</div>
+        `;
+      } else if (step === "gambler") {
+        if (state.nightNumber < 2) {
+          actionPanel.innerHTML = `
+            <b>Con bạc</b>
+            <div class="hint">Đêm 1 ngủ, chỉ cược từ ĐÊM 2.</div>
+          `;
+        } else {
+          const opts = aliveList.map(p =>
+            `<option value="${p.id}" ${state.nightActions.gamblerBetTargetId === p.id ? "selected" : ""}>
+              ${p.name}
+            </option>`
+          ).join("");
+          actionPanel.innerHTML = `
+            <b>Con bạc – Cược vào ai?</b>
+            <select onchange="updateNightAction('gambler_bet', this.value)">
+              <option value="">(Không cược)</option>
+              ${opts}
+            </select>
+            <div class="hint">
+              Nếu người được cược là Sói → Sói chết. Nếu không phải Sói → Con bạc chết.
+            </div>
+          `;
+        }
+      } else if (step === "seer") {
+        actionPanel.innerHTML = `
+          <b>Tiên tri</b>
+          <div class="hint">
+            Tiên tri chỉ hỏi quản trò xem 1 người có phải Sói hay không. Không cần ghi vào app, bạn tự nhớ.
+          </div>
+        `;
+      } else if (step === "prince") {
+        actionPanel.innerHTML = `
+          <b>Hoàng tử</b>
+          <div class="hint">
+            Thường chỉ ảnh hưởng khi bị treo cổ ban ngày (không chết, lộ thân phận...). Bạn xử lý bằng miệng.
+          </div>
+        `;
       }
     }
-  }
 
-  deaths.forEach(p=>{ p.alive=false });
-  renderPlayers();
-}
+    function renderWinner() {
+      const box = document.getElementById("winnerText");
+      if (!state.winner) {
+        box.textContent = "";
+        box.className = "winner-text";
+        return;
+      }
+      if (state.winner === "village") {
+        box.textContent = "🎉 DÂN LÀNG THẮNG!";
+        box.className = "winner-text winner-village";
+      } else {
+        box.textContent = "🔥 MA SÓI THẮNG!";
+        box.className = "winner-text winner-wolves";
+      }
+    }
 
-function renderPlayers(){
-  let box=document.getElementById("players");
-  box.innerHTML="";
-  state.players.forEach(p=>{
-    let div=document.createElement("div");
-    div.className="player-card";
-    div.innerHTML=`
-      <b>${p.name}</b> — ${p.role}
-      <div class="status">${p.alive?"✔ sống":"☠ chết"} ${p.muted?"🤐 mute":""}</div>
-    `;
-    box.appendChild(div);
-  });
-}
+    // ======== INIT ========
 
-function renderLogs(){
-  let box=document.getElementById("log-box");
-  box.innerHTML="";
-  state.logs.forEach(l=>{
-    let d=document.createElement("div");
-    d.className="log-line";
-    d.textContent=l;
-    box.appendChild(d);
-  });
-}
-
-function resetAll(){
-  if(!confirm("Reset ván?")) return;
-  state={
-    players:[],
-    phase:"setup",
-    night:1,
-    step:0,
-    logs:[],
-    witchUsed:false,
-    actions:{wolf:null,guard:null,witchHeal:false,witchPoison:null,mute:null,bet:null}
-  };
-  renderPlayers(); renderLogs();
-  log("♻ Reset xong");
-}
-
-ROLES.forEach(r=>{
-  let o=document.createElement("option");
-  o.value=r.id; o.textContent=r.label;
-  document.getElementById("role").appendChild(o);
-});
-</script>
-
+    populateRoleSelect();
+    renderPlayers();
+    renderLogs();
+    renderPhaseInfo();
+  </script>
 </body>
 </html>
