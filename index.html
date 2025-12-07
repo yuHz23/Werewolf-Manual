@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>Ma Sói Host Mobile</title>
+
+<style>
+  body {
+    margin:0;
+    background:#0a0f17;
+    color:#fff;
+    font-family:Arial, sans-serif;
+  }
+
+  .container {
+    max-width:430px;
+    margin:auto;
+    padding:10px 14px;
+  }
+
+  h2 {
+    font-size:18px;
+    margin-top:12px;
+    margin-bottom:6px;
+  }
+
+  input, select {
+    width:100%;
+    padding:10px;
+    margin:5px 0;
+    border-radius:8px;
+    border:none;
+    font-size:15px;
+    background:#151b25;
+    color:#fff;
+  }
+
+  button {
+    width:100%;
+    padding:12px;
+    margin:6px 0;
+    font-size:16px;
+    border-radius:8px;
+    border:none;
+    font-weight:bold;
+    color:#fff;
+  }
+
+  .btn-primary {
+    background:#1abc9c;
+  }
+  .btn-secondary {
+    background:#34495e;
+  }
+  .btn-danger {
+    background:#e74c3c;
+  }
+
+  .player-card {
+    background:#111621;
+    margin-top:6px;
+    padding:10px;
+    border-radius:8px;
+    font-size:14px;
+  }
+
+  .status {
+    font-size:12px;
+    opacity:.7;
+  }
+
+  #log-box {
+    background:#0f141d;
+    padding:10px;
+    border-radius:8px;
+    height:200px;
+    overflow-y:auto;
+    font-size:13px;
+    margin-top:10px;
+  }
+
+  .log-line {
+    border-bottom:1px dotted #333;
+    padding:3px 0;
+  }
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<h2>Thêm người chơi</h2>
+<input id="name" placeholder="Tên người chơi">
+<select id="role"></select>
+<button class="btn-secondary" onclick="addPlayer()">Thêm người</button>
+
+<button class="btn-primary" onclick="startGame()">🌙 Bắt đầu ván</button>
+
+<h2>Người chơi</h2>
+<div id="players"></div>
+
+<h2>Điều khiển</h2>
+<button class="btn-secondary" onclick="nextRole()">📣 Gọi role</button>
+<button class="btn-secondary" onclick="startDay()">☀️ Bắt đầu ngày</button>
+<button class="btn-secondary" onclick="startNight()">🌙 Bắt đầu đêm</button>
+<button class="btn-danger" onclick="resetAll()">Xóa ván</button>
+
+<h2>Log</h2>
+<div id="log-box"></div>
+
+</div>
+
+<script>
+const ROLES = [
+  {id:"werewolf",label:"🐺 Sói"},
+  {id:"seer",label:"🔮 Tiên tri"},
+  {id:"witch",label:"🧪 Phù thủy"},
+  {id:"guard",label:"🛡️ Bảo vệ"},
+  {id:"mage",label:"🧙 Pháp sư"},
+  {id:"gambler",label:"🎲 Con bạc"},
+  {id:"prince",label:"👑 Hoàng tử"},
+  {id:"villager",label:"👤 Dân làng"}
+];
+
+const ORDER = ["mage","werewolf","seer","witch","guard","gambler","prince"];
+
+let state = {
+  players:[],
+  phase:"setup",
+  night:1,
+  step:0,
+  logs:[],
+  witchUsed:false,
+  actions:{
+    wolf:null,
+    guard:null,
+    witchHeal:false,
+    witchPoison:null,
+    mute:null,
+    bet:null
+  }
+};
+
+function log(t){
+  state.logs.unshift(t);
+  renderLogs();
+}
+
+function addPlayer(){
+  let name=document.getElementById("name").value.trim();
+  let role=document.getElementById("role").value;
+  if(!name||!role) return alert("Nhập đầy đủ");
+  state.players.push({name,role,alive:true,muted:false});
+  document.getElementById("name").value="";
+  renderPlayers();
+  log("➕ "+name+" ("+role+")");
+}
+
+function startGame(){
+  if(state.players.length<4) return alert("Cần ≥ 4 người");
+  state.phase="night";
+  state.step=0;
+  log("🌙 Đêm 1 bắt đầu");
+  renderPlayers();
+}
+
+function startNight(){
+  if(state.phase==="ended") return;
+  state.phase="night";
+  state.night++;
+  state.step=0;
+  state.players.forEach(p=>p.muted=false);
+  state.actions={wolf:null,guard:null,witchHeal:false,witchPoison:null,mute:null,bet:null};
+  log("🌙 Đêm "+state.night+" bắt đầu");
+}
+
+function startDay(){
+  if(state.phase==="ended") return;
+  state.phase="day";
+  log("☀️ Ban ngày bắt đầu");
+}
+
+function nextRole(){
+  if(state.phase!=="night") return alert("Role chỉ gọi lúc ĐÊM");
+  if(state.step>=ORDER.length){
+    resolveNight();
+    log("✔ Đêm kết thúc");
+    return;
+  }
+  let r=ORDER[state.step++];
+  callRole(r);
+}
+
+function callRole(r){
+  if(!state.players.some(p=>p.role===r&&p.alive)) return;
+  log("📣 Gọi "+r);
+  // (Panel input thực tế mình đã giản lược — bạn tick miệng,
+  // app chỉ tracking log & xử lý chết/sống)
+}
+
+function resolveNight(){
+  let deaths=[];
+  function get(p){return state.players.find(x=>x.name===p&&x.alive);}
+  let wolf=get(state.actions.wolf);
+  let guard=get(state.actions.guard);
+  let poison=get(state.actions.witchPoison);
+
+  let potionUsed=false;
+
+  if(wolf){
+    if(guard===wolf){
+      log("🛡️ Bảo vệ che chắn "+wolf.name);
+    }else if(!state.witchUsed && state.actions.witchHeal){
+      potionUsed=true;
+      log("🧪 Phù thủy CỨU "+wolf.name);
+    }else{
+      deaths.push(wolf);
+      log("🐺 Sói giết "+wolf.name);
+    }
+  }
+
+  if(!state.witchUsed && poison){
+    deaths.push(poison);
+    potionUsed=true;
+    log("💀 Phù thủy ĐỘC "+poison.name);
+  }
+
+  if(potionUsed){
+    state.witchUsed=true;
+    log("🧪 Phù thủy đã hết bình cho cả game");
+  }
+
+  if(state.actions.mute){
+    let m=get(state.actions.mute);
+    if(m){ m.muted=true; log("🤐 "+m.name+" bị MUTE"); }
+  }
+
+  if(state.night>=2 && state.actions.bet){
+    let g=state.players.find(p=>p.role==="gambler"&&p.alive);
+    let t=get(state.actions.bet);
+    if(g&&t){
+      if(t.role==="werewolf"){
+        deaths.push(t); log("🎲 Con bạc đoán TRÚNG Sói!");
+      }else{
+        deaths.push(g); log("🎲 Con bạc đoán sai -> chết");
+      }
+    }
+  }
+
+  deaths.forEach(p=>{ p.alive=false });
+  renderPlayers();
+}
+
+function renderPlayers(){
+  let box=document.getElementById("players");
+  box.innerHTML="";
+  state.players.forEach(p=>{
+    let div=document.createElement("div");
+    div.className="player-card";
+    div.innerHTML=`
+      <b>${p.name}</b> — ${p.role}
+      <div class="status">${p.alive?"✔ sống":"☠ chết"} ${p.muted?"🤐 mute":""}</div>
+    `;
+    box.appendChild(div);
+  });
+}
+
+function renderLogs(){
+  let box=document.getElementById("log-box");
+  box.innerHTML="";
+  state.logs.forEach(l=>{
+    let d=document.createElement("div");
+    d.className="log-line";
+    d.textContent=l;
+    box.appendChild(d);
+  });
+}
+
+function resetAll(){
+  if(!confirm("Reset ván?")) return;
+  state={
+    players:[],
+    phase:"setup",
+    night:1,
+    step:0,
+    logs:[],
+    witchUsed:false,
+    actions:{wolf:null,guard:null,witchHeal:false,witchPoison:null,mute:null,bet:null}
+  };
+  renderPlayers(); renderLogs();
+  log("♻ Reset xong");
+}
+
+ROLES.forEach(r=>{
+  let o=document.createElement("option");
+  o.value=r.id; o.textContent=r.label;
+  document.getElementById("role").appendChild(o);
+});
+</script>
+
+</body>
+</html>
